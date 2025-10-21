@@ -1,0 +1,374 @@
+-- =====================================================
+-- ESQUEMA BASE DE DATOS SQL SERVER - SISTEMA DE BAHÍAS
+-- Servidor: test_QA.mssql.somee.com
+-- Base de datos: test_QA
+-- =====================================================
+
+-- Tabla de Usuarios
+CREATE TABLE usuarios (
+    id VARCHAR(36) PRIMARY KEY DEFAULT NEWID(),
+    email VARCHAR(255) UNIQUE NOT NULL,
+    nombre VARCHAR(255) NOT NULL,
+    hash_contrasena VARCHAR(255) NOT NULL,
+    tipo_usuario VARCHAR(50) CHECK (tipo_usuario IN ('administrador', 'operador', 'planificador', 'supervisor', 'administrador_ti')) NOT NULL,
+    activo BIT DEFAULT 1,
+    fecha_registro DATETIME2 DEFAULT GETDATE(),
+    fecha_ultima_modificacion DATETIME2 DEFAULT GETDATE(),
+    creado_por VARCHAR(36) NULL
+);
+
+CREATE INDEX idx_usuarios_email ON usuarios(email);
+CREATE INDEX idx_usuarios_tipo ON usuarios(tipo_usuario);
+
+-- Tabla de Tipos de Bahía
+CREATE TABLE tipos_bahia (
+    id INT IDENTITY(1,1) PRIMARY KEY,
+    codigo VARCHAR(50) UNIQUE NOT NULL,
+    nombre VARCHAR(100) NOT NULL,
+    descripcion VARCHAR(MAX),
+    activo BIT DEFAULT 1,
+    fecha_creacion DATETIME2 DEFAULT GETDATE()
+);
+
+-- Insertar tipos de bahía predeterminados
+INSERT INTO tipos_bahia (codigo, nombre, descripcion) VALUES
+('estandar', 'Estándar', 'Bahía de carga estándar para mercancía general'),
+('refrigerada', 'Refrigerada', 'Bahía con sistema de refrigeración'),
+('peligrosos', 'Peligrosos', 'Bahía para materiales peligrosos'),
+('sobremedida', 'Sobremédida', 'Bahía para carga de gran tamaño'),
+('prioritaria', 'Prioritaria', 'Bahía de acceso prioritario');
+
+-- Tabla de Estados de Bahía
+CREATE TABLE estados_bahia (
+    id INT IDENTITY(1,1) PRIMARY KEY,
+    codigo VARCHAR(50) UNIQUE NOT NULL,
+    nombre VARCHAR(100) NOT NULL,
+    descripcion VARCHAR(MAX),
+    color VARCHAR(7),
+    activo BIT DEFAULT 1
+);
+
+-- Insertar estados predeterminados
+INSERT INTO estados_bahia (codigo, nombre, descripcion, color) VALUES
+('libre', 'Libre', 'Bahía disponible para reserva', '#4CAF50'),
+('reservada', 'Reservada', 'Bahía reservada pendiente de uso', '#FF9800'),
+('en_uso', 'En Uso', 'Bahía actualmente en operación', '#F44336'),
+('mantenimiento', 'Mantenimiento', 'Bahía en mantenimiento', '#2196F3');
+
+-- Tabla de Bahías
+CREATE TABLE bahias (
+    id VARCHAR(36) PRIMARY KEY DEFAULT NEWID(),
+    numero INT UNIQUE NOT NULL,
+    tipo_bahia_id INT NOT NULL,
+    estado_bahia_id INT NOT NULL,
+    capacidad_maxima DECIMAL(10,2),
+    ubicacion VARCHAR(255),
+    observaciones VARCHAR(MAX),
+    activo BIT DEFAULT 1,
+    fecha_creacion DATETIME2 DEFAULT GETDATE(),
+    fecha_ultima_modificacion DATETIME2 DEFAULT GETDATE(),
+    creado_por VARCHAR(36),
+    FOREIGN KEY (tipo_bahia_id) REFERENCES tipos_bahia(id),
+    FOREIGN KEY (estado_bahia_id) REFERENCES estados_bahia(id),
+    FOREIGN KEY (creado_por) REFERENCES usuarios(id)
+);
+
+CREATE INDEX idx_bahias_numero ON bahias(numero);
+CREATE INDEX idx_bahias_tipo ON bahias(tipo_bahia_id);
+CREATE INDEX idx_bahias_estado ON bahias(estado_bahia_id);
+CREATE INDEX idx_bahias_activo ON bahias(activo);
+
+-- Tabla de Reservas
+CREATE TABLE reservas (
+    id VARCHAR(36) PRIMARY KEY DEFAULT NEWID(),
+    bahia_id VARCHAR(36) NOT NULL,
+    usuario_id VARCHAR(36) NOT NULL,
+    fecha_hora_inicio DATETIME2 NOT NULL,
+    fecha_hora_fin DATETIME2 NOT NULL,
+    estado VARCHAR(20) CHECK (estado IN ('activa', 'completada', 'cancelada')) DEFAULT 'activa',
+    vehiculo_placa VARCHAR(20),
+    conductor_nombre VARCHAR(255),
+    conductor_telefono VARCHAR(20),
+    conductor_documento VARCHAR(50),
+    mercancia_tipo VARCHAR(255),
+    mercancia_peso DECIMAL(10,2),
+    mercancia_descripcion VARCHAR(MAX),
+    observaciones VARCHAR(MAX),
+    fecha_creacion DATETIME2 DEFAULT GETDATE(),
+    fecha_cancelacion DATETIME2 NULL,
+    fecha_completacion DATETIME2 NULL,
+    cancelado_por VARCHAR(36),
+    motivo_cancelacion VARCHAR(MAX),
+    FOREIGN KEY (bahia_id) REFERENCES bahias(id),
+    FOREIGN KEY (usuario_id) REFERENCES usuarios(id),
+    FOREIGN KEY (cancelado_por) REFERENCES usuarios(id),
+    CHECK (fecha_hora_fin > fecha_hora_inicio)
+);
+
+CREATE INDEX idx_reservas_bahia ON reservas(bahia_id);
+CREATE INDEX idx_reservas_usuario ON reservas(usuario_id);
+CREATE INDEX idx_reservas_estado ON reservas(estado);
+CREATE INDEX idx_reservas_fecha_inicio ON reservas(fecha_hora_inicio);
+CREATE INDEX idx_reservas_fecha_fin ON reservas(fecha_hora_fin);
+
+-- Tabla de Historial de Estados de Bahía
+CREATE TABLE historial_estados_bahia (
+    id BIGINT IDENTITY(1,1) PRIMARY KEY,
+    bahia_id VARCHAR(36) NOT NULL,
+    estado_anterior_id INT,
+    estado_nuevo_id INT NOT NULL,
+    usuario_id VARCHAR(36) NOT NULL,
+    motivo VARCHAR(MAX),
+    fecha_cambio DATETIME2 DEFAULT GETDATE(),
+    FOREIGN KEY (bahia_id) REFERENCES bahias(id),
+    FOREIGN KEY (estado_anterior_id) REFERENCES estados_bahia(id),
+    FOREIGN KEY (estado_nuevo_id) REFERENCES estados_bahia(id),
+    FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
+);
+
+CREATE INDEX idx_historial_bahia_fecha ON historial_estados_bahia(bahia_id, fecha_cambio);
+
+-- Tabla de Mantenimientos
+CREATE TABLE mantenimientos (
+    id VARCHAR(36) PRIMARY KEY DEFAULT NEWID(),
+    bahia_id VARCHAR(36) NOT NULL,
+    tipo_mantenimiento VARCHAR(20) CHECK (tipo_mantenimiento IN ('preventivo', 'correctivo', 'emergencia')) NOT NULL,
+    descripcion VARCHAR(MAX) NOT NULL,
+    fecha_inicio DATETIME2 NOT NULL,
+    fecha_fin_programada DATETIME2 NOT NULL,
+    fecha_fin_real DATETIME2 NULL,
+    estado VARCHAR(20) CHECK (estado IN ('programado', 'en_progreso', 'completado', 'cancelado')) DEFAULT 'programado',
+    tecnico_responsable VARCHAR(255),
+    costo DECIMAL(10,2),
+    observaciones VARCHAR(MAX),
+    usuario_registro VARCHAR(36) NOT NULL,
+    fecha_registro DATETIME2 DEFAULT GETDATE(),
+    FOREIGN KEY (bahia_id) REFERENCES bahias(id),
+    FOREIGN KEY (usuario_registro) REFERENCES usuarios(id)
+);
+
+CREATE INDEX idx_mantenimientos_bahia ON mantenimientos(bahia_id);
+CREATE INDEX idx_mantenimientos_estado ON mantenimientos(estado);
+
+-- Tabla de Incidencias
+CREATE TABLE incidencias (
+    id VARCHAR(36) PRIMARY KEY DEFAULT NEWID(),
+    bahia_id VARCHAR(36),
+    reserva_id VARCHAR(36),
+    tipo_incidencia VARCHAR(20) CHECK (tipo_incidencia IN ('retraso', 'dano', 'accidente', 'otro')) NOT NULL,
+    descripcion VARCHAR(MAX) NOT NULL,
+    severidad VARCHAR(20) CHECK (severidad IN ('baja', 'media', 'alta', 'critica')) NOT NULL,
+    estado VARCHAR(20) CHECK (estado IN ('abierta', 'en_proceso', 'resuelta', 'cerrada')) DEFAULT 'abierta',
+    fecha_incidencia DATETIME2 NOT NULL,
+    fecha_resolucion DATETIME2 NULL,
+    reportado_por VARCHAR(36) NOT NULL,
+    asignado_a VARCHAR(36),
+    resolucion VARCHAR(MAX),
+    fecha_registro DATETIME2 DEFAULT GETDATE(),
+    FOREIGN KEY (bahia_id) REFERENCES bahias(id),
+    FOREIGN KEY (reserva_id) REFERENCES reservas(id),
+    FOREIGN KEY (reportado_por) REFERENCES usuarios(id),
+    FOREIGN KEY (asignado_a) REFERENCES usuarios(id)
+);
+
+CREATE INDEX idx_incidencias_bahia ON incidencias(bahia_id);
+CREATE INDEX idx_incidencias_estado ON incidencias(estado);
+
+-- Tabla de Notificaciones
+CREATE TABLE notificaciones (
+    id BIGINT IDENTITY(1,1) PRIMARY KEY,
+    usuario_id VARCHAR(36) NOT NULL,
+    tipo VARCHAR(20) CHECK (tipo IN ('reserva', 'mantenimiento', 'incidencia', 'alerta', 'sistema')) NOT NULL,
+    titulo VARCHAR(255) NOT NULL,
+    mensaje VARCHAR(MAX) NOT NULL,
+    referencia_id VARCHAR(36),
+    referencia_tipo VARCHAR(50),
+    leida BIT DEFAULT 0,
+    fecha_creacion DATETIME2 DEFAULT GETDATE(),
+    fecha_lectura DATETIME2 NULL,
+    FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
+);
+
+CREATE INDEX idx_notificaciones_usuario ON notificaciones(usuario_id, leida);
+
+-- Tabla de Logs de Auditoría
+CREATE TABLE logs_auditoria (
+    id BIGINT IDENTITY(1,1) PRIMARY KEY,
+    usuario_id VARCHAR(36),
+    accion VARCHAR(100) NOT NULL,
+    tabla_afectada VARCHAR(100),
+    registro_id VARCHAR(36),
+    datos_anteriores VARCHAR(MAX),
+    datos_nuevos VARCHAR(MAX),
+    ip_address VARCHAR(45),
+    user_agent VARCHAR(MAX),
+    fecha_accion DATETIME2 DEFAULT GETDATE(),
+    FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
+);
+
+CREATE INDEX idx_logs_usuario ON logs_auditoria(usuario_id);
+CREATE INDEX idx_logs_fecha ON logs_auditoria(fecha_accion);
+
+-- Tabla de Configuración del Sistema
+CREATE TABLE configuracion_sistema (
+    id INT IDENTITY(1,1) PRIMARY KEY,
+    clave VARCHAR(100) UNIQUE NOT NULL,
+    valor VARCHAR(MAX) NOT NULL,
+    tipo_dato VARCHAR(20) CHECK (tipo_dato IN ('cadena', 'numero', 'booleano', 'json')) DEFAULT 'cadena',
+    descripcion VARCHAR(MAX),
+    modificable BIT DEFAULT 1,
+    fecha_modificacion DATETIME2 DEFAULT GETDATE(),
+    modificado_por VARCHAR(36),
+    FOREIGN KEY (modificado_por) REFERENCES usuarios(id)
+);
+
+-- Insertar configuraciones predeterminadas
+INSERT INTO configuracion_sistema (clave, valor, tipo_dato, descripcion) VALUES
+('tiempo_maximo_reserva_horas', '4', 'numero', 'Tiempo máximo de una reserva en horas'),
+('tiempo_minimo_reserva_minutos', '30', 'numero', 'Tiempo mínimo de una reserva en minutos'),
+('notificar_tiempo_critico_porcentaje', '90', 'numero', 'Porcentaje para notificar tiempo crítico'),
+('permitir_reservas_simultaneas', 'false', 'booleano', 'Permitir múltiples reservas simultáneas'),
+('horas_anticipacion_minima', '1', 'numero', 'Horas mínimas de anticipación');
+
+-- Vista para estadísticas de bahías
+GO
+CREATE VIEW vista_estadisticas_bahias AS
+SELECT 
+    b.id,
+    b.numero,
+    tb.nombre AS tipo_bahia,
+    eb.nombre AS estado_actual,
+    COUNT(DISTINCT r.id) AS total_reservas,
+    COUNT(DISTINCT CASE WHEN r.estado = 'completada' THEN r.id END) AS reservas_completadas,
+    AVG(DATEDIFF(MINUTE, r.fecha_hora_inicio, r.fecha_hora_fin)) AS duracion_promedio_minutos,
+    MAX(r.fecha_hora_fin) AS ultima_utilizacion
+FROM bahias b
+LEFT JOIN tipos_bahia tb ON b.tipo_bahia_id = tb.id
+LEFT JOIN estados_bahia eb ON b.estado_bahia_id = eb.id
+LEFT JOIN reservas r ON b.id = r.bahia_id
+WHERE b.activo = 1
+GROUP BY b.id, b.numero, tb.nombre, eb.nombre;
+GO
+
+-- Vista para reservas activas
+CREATE VIEW vista_reservas_activas AS
+SELECT 
+    r.id,
+    r.bahia_id,
+    b.numero AS numero_bahia,
+    tb.nombre AS tipo_bahia,
+    r.usuario_id,
+    u.nombre AS usuario_nombre,
+    u.email AS usuario_email,
+    r.fecha_hora_inicio,
+    r.fecha_hora_fin,
+    r.vehiculo_placa,
+    r.conductor_nombre,
+    r.mercancia_tipo,
+    DATEDIFF(MINUTE, r.fecha_hora_inicio, r.fecha_hora_fin) AS duracion_minutos,
+    CASE 
+        WHEN GETDATE() < r.fecha_hora_inicio THEN 'pendiente'
+        WHEN GETDATE() BETWEEN r.fecha_hora_inicio AND r.fecha_hora_fin THEN 'en_progreso'
+        ELSE 'vencida'
+    END AS estado_temporal
+FROM reservas r
+INNER JOIN bahias b ON r.bahia_id = b.id
+INNER JOIN tipos_bahia tb ON b.tipo_bahia_id = tb.id
+INNER JOIN usuarios u ON r.usuario_id = u.id
+WHERE r.estado = 'activa';
+GO
+
+-- Procedimiento almacenado para validar disponibilidad
+CREATE PROCEDURE sp_validar_disponibilidad_bahia
+    @bahia_id VARCHAR(36),
+    @fecha_inicio DATETIME2,
+    @fecha_fin DATETIME2,
+    @disponible BIT OUTPUT,
+    @mensaje VARCHAR(255) OUTPUT
+AS
+BEGIN
+    SET NOCOUNT ON;
+    
+    DECLARE @count INT;
+    DECLARE @estado_actual VARCHAR(50);
+    
+    -- Obtener estado actual
+    SELECT @estado_actual = eb.codigo
+    FROM bahias b
+    INNER JOIN estados_bahia eb ON b.estado_bahia_id = eb.id
+    WHERE b.id = @bahia_id AND b.activo = 1;
+    
+    -- Verificar existencia
+    IF @estado_actual IS NULL
+    BEGIN
+        SET @disponible = 0;
+        SET @mensaje = 'Bahía no encontrada o inactiva';
+        RETURN;
+    END
+    
+    -- Verificar mantenimiento
+    IF @estado_actual = 'mantenimiento'
+    BEGIN
+        SET @disponible = 0;
+        SET @mensaje = 'Bahía en mantenimiento';
+        RETURN;
+    END
+    
+    -- Verificar conflictos
+    SELECT @count = COUNT(*)
+    FROM reservas
+    WHERE bahia_id = @bahia_id
+    AND estado = 'activa'
+    AND (
+        (fecha_hora_inicio <= @fecha_inicio AND fecha_hora_fin > @fecha_inicio)
+        OR (fecha_hora_inicio < @fecha_fin AND fecha_hora_fin >= @fecha_fin)
+        OR (fecha_hora_inicio >= @fecha_inicio AND fecha_hora_fin <= @fecha_fin)
+    );
+    
+    IF @count > 0
+    BEGIN
+        SET @disponible = 0;
+        SET @mensaje = 'Ya existen reservas en ese horario';
+    END
+    ELSE
+    BEGIN
+        SET @disponible = 1;
+        SET @mensaje = 'Bahía disponible';
+    END
+END;
+GO
+
+-- Trigger para historial de cambios
+CREATE TRIGGER tr_bahias_cambio_estado
+ON bahias
+AFTER UPDATE
+AS
+BEGIN
+    SET NOCOUNT ON;
+    
+    IF UPDATE(estado_bahia_id)
+    BEGIN
+        INSERT INTO historial_estados_bahia (
+            bahia_id,
+            estado_anterior_id,
+            estado_nuevo_id,
+            usuario_id,
+            motivo
+        )
+        SELECT 
+            i.id,
+            d.estado_bahia_id,
+            i.estado_bahia_id,
+            i.creado_por,
+            'Cambio automático de estado'
+        FROM inserted i
+        INNER JOIN deleted d ON i.id = d.id
+        WHERE i.estado_bahia_id != d.estado_bahia_id;
+    END
+END;
+GO
+
+
+
+para usar las apis 
+.\venv\Scripts\activate
