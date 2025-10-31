@@ -117,22 +117,24 @@ async def crear_bahia(
         row = cursor.fetchone()
         if not row:
             raise HTTPException(status_code=401, detail="Usuario no válido")
-        user_tipo = row[0]  # Acceder por índice
+        
+        user_tipo = row[0] if isinstance(row, tuple) else row.get('tipo_usuario')
 
+        # Verificar permisos
         if user_tipo not in [TipoUsuario.ADMINISTRADOR, TipoUsuario.OPERADOR, TipoUsuario.ADMINISTRADOR_TI]:
             raise HTTPException(status_code=403, detail="No tiene permisos para crear bahías")
         
         # Verificar número único
-        cursor.execute("SELECT id FROM bahias WHERE numero = %s", (bahia.numero,))
+        cursor.execute("SELECT id FROM bahias WHERE numero = %s AND activo = 1", (bahia.numero,))
         if cursor.fetchone():
             raise HTTPException(status_code=400, detail="Ya existe una bahía con este número")
         
         # Verificar tipo y estado válidos
-        cursor.execute("SELECT id FROM tipos_bahia WHERE id = %s", (bahia.tipo_bahia_id,))
+        cursor.execute("SELECT id FROM tipos_bahia WHERE id = %s AND activo = 1", (bahia.tipo_bahia_id,))
         if not cursor.fetchone():
             raise HTTPException(status_code=400, detail="Tipo de bahía no válido")
         
-        cursor.execute("SELECT id FROM estados_bahia WHERE id = %s", (bahia.estado_bahia_id,))
+        cursor.execute("SELECT id FROM estados_bahia WHERE id = %s AND activo = 1", (bahia.estado_bahia_id,))
         if not cursor.fetchone():
             raise HTTPException(status_code=400, detail="Estado de bahía no válido")
         
@@ -146,21 +148,32 @@ async def crear_bahia(
                 fecha_ultima_modificacion, creado_por
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, 1, GETDATE(), GETDATE(), %s)
         """, (bahia_id, bahia.numero, bahia.tipo_bahia_id, bahia.estado_bahia_id,
-              bahia.capacidad_maxima, bahia.ubicacion, bahia.observaciones, current_user))
+              bahia.capacidad_maxima, bahia.ubicacion, bahia.observaciones or '', current_user))
         
         conn.commit()
         
-        # Retornar bahía creada
+        # Retornar bahía creada con todos los campos necesarios
         cursor.execute("""
             SELECT b.id, b.numero, b.tipo_bahia_id, b.estado_bahia_id,
                    b.capacidad_maxima, b.ubicacion, b.observaciones,
                    b.activo, b.fecha_creacion, b.fecha_ultima_modificacion,
-                   b.creado_por
+                   b.creado_por,
+                   tb.nombre as tipo_bahia_nombre,
+                   eb.nombre as estado_bahia_nombre,
+                   eb.codigo as estado_bahia_codigo
             FROM bahias b
+            LEFT JOIN tipos_bahia tb ON b.tipo_bahia_id = tb.id
+            LEFT JOIN estados_bahia eb ON b.estado_bahia_id = eb.id
             WHERE b.id = %s
         """, (bahia_id,))
+        
         bahia_creada = dict_row(cursor)
         cursor.close()
+        
+        if not bahia_creada:
+            raise HTTPException(status_code=500, detail="Error al recuperar la bahía creada")
+        
+        print(f"✅ Bahía creada exitosamente: {bahia_creada}")
         
         return BahiaResponse(**bahia_creada)
         
@@ -168,8 +181,8 @@ async def crear_bahia(
         raise
     except Exception as e:
         conn.rollback()
+        print(f"❌ Error al crear bahía: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error interno del servidor: {str(e)}")
-
 @router.get("/tipos/")
 async def obtener_tipos_bahia(conn = Depends(get_db)):
     try:
