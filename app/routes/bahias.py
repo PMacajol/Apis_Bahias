@@ -204,3 +204,72 @@ async def obtener_estados_bahia(conn = Depends(get_db)):
         return estados
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error interno del servidor: {str(e)}")
+
+
+
+@router.put("/{bahia_id}/iniciar-uso")
+async def iniciar_uso_bahia(
+    bahia_id: str,
+    current_user: str = Depends(get_current_user),
+    conn = Depends(get_db)
+):
+    """
+    Cambia el estado de una bahía de 'reservada' a 'en_uso'.
+    Solo para uso administrativo.
+    """
+    try:
+        cursor = conn.cursor()
+        
+        # Verificar permisos
+        cursor.execute("SELECT tipo_usuario FROM usuarios WHERE id = %s", (current_user,))
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=401, detail="Usuario no válido")
+        
+        user_tipo = row[0] if isinstance(row, tuple) else row.get('tipo_usuario')
+        
+        if user_tipo not in [TipoUsuario.ADMINISTRADOR, TipoUsuario.OPERADOR, TipoUsuario.SUPERVISOR, TipoUsuario.ADMINISTRADOR_TI]:
+            raise HTTPException(status_code=403, detail="No tiene permisos para iniciar uso de bahías")
+        
+        # Obtener bahía actual
+        cursor.execute("""
+            SELECT b.id, b.numero, b.estado_bahia_id, eb.codigo as estado_codigo
+            FROM bahias b
+            INNER JOIN estados_bahia eb ON b.estado_bahia_id = eb.id
+            WHERE b.id = %s AND b.activo = 1
+        """, (bahia_id,))
+        
+        bahia = dict_row(cursor)
+        if not bahia:
+            raise HTTPException(status_code=404, detail="Bahía no encontrada")
+        
+        # Verificar que esté reservada
+        if bahia['estado_codigo'] != 'reservada':
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Solo se puede iniciar uso de bahías reservadas. Estado actual: {bahia['estado_codigo']}"
+            )
+        
+        # Cambiar estado a 'en_uso' (id = 3)
+        cursor.execute("""
+            UPDATE bahias 
+            SET estado_bahia_id = 3,
+                fecha_ultima_modificacion = GETDATE()
+            WHERE id = %s
+        """, (bahia_id,))
+        
+        conn.commit()
+        cursor.close()
+        
+        return {
+            "message": f"Bahía {bahia['numero']} puesta en uso correctamente",
+            "bahia_id": bahia_id,
+            "estado_anterior": "reservada",
+            "estado_nuevo": "en_uso"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Error interno del servidor: {str(e)}")
